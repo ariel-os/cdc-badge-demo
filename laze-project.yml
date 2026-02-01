@@ -1,0 +1,16 @@
+imports:
+  - git:
+      url: https://github.com/ariel-os/ariel-os
+      commit: 96c87f779babeb4b9b09679253f9e03ca62c3835 # BLE support for esp
+    dldir: ariel-os
+
+apps:
+  - name: cdc-badge-demo
+    context:
+      - espressif-esp32-s3-devkitc-1
+    env:
+      global:
+        executor_stacksize_required:
+          - "131072"
+        thread_stacksize_required:
+          - "131072"
