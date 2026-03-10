@@ -13,24 +13,23 @@ ariel-os = { path = "build/imports/ariel-os/src/ariel-os", features = [
 ] }
 ariel-os-boards = { path = "build/imports/ariel-os/src/ariel-os-boards" }
 
-ssd1680-rs = { git = "https://github.com/nponsard/ssd1680-rs.git", features = [
-  "async",
-] }
 
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
-
 embedded-graphics-core = { version = "0.4.0" }
 embedded-graphics = { version = "0.8.1" }
-
+embassy-sync = "0.7.2"
+heapless = { version = "0.9.2", features = ["defmt"] }
 once_cell = { version = "1.21.3", default-features = false, features = [
   "critical-section",
 ] }
-
-embassy-sync = "0.7.2"
-
-
 tinybmp = "0.7.0"
+
+ssd1680-rs = { git = "https://github.com/nponsard/ssd1680-rs.git", features = [
+  "async",
+] }
+async-tca9535 = { version = "0.1.0", git = "https://github.com/nponsard/async-tca9535", rev = "ecc373c3890c01593f0a0c78c1a76d69489019cd" }
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
   'cfg(context, values(any()))',

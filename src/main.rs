@@ -1,13 +1,22 @@
 #![no_main]
 #![no_std]
 
+mod buttons;
+mod pins;
+
 use ariel_os::{
-    debug::log::info,
-    gpio, hal, i2c, spi,
-    spi::main::SpiDevice,
-    time::{Delay, Timer},
+    debug::log::{Debug2Format, debug, info},
+    gpio, hal, i2c,
+    spi::{self, main::SpiDevice},
+    time::{Delay, Instant, Timer},
 };
-use embassy_sync::mutex::Mutex;
+use async_tca9535::{
+    Tca9535,
+    registers::{Configuration, Polarity},
+};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel,
+};
 use embedded_graphics::{
     Drawable,
     image::Image,
@@ -17,10 +26,19 @@ use embedded_graphics::{
 use embedded_hal_async::i2c::I2c as _;
 use tinybmp::Bmp;
 
+use crate::buttons::ButtonsStatus;
+
 const TARGET_I2C_ADDR: u8 = 0x6A;
 const WHO_AM_I_REG_ADDR: u8 = 0x14;
 
-mod pins;
+// Channel with one publisher and maximum 4 subscribers.
+static BUTTONS_CHANNEL: PubSubChannel<
+    CriticalSectionRawMutex,
+    (buttons::Button, buttons::ButtonSatuChange),
+    { buttons::Button::COUNT },
+    4,
+    1,
+> = PubSubChannel::new();
 
 #[ariel_os::task(autostart, peripherals)]
 async fn main(peripherals: pins::I2cBus) {
@@ -73,6 +91,54 @@ async fn main(peripherals: pins::I2cBus) {
         .await
         .unwrap();
     info!("0x03 register value: 0b{:b}", tmp[0]);
+
+    // We'll probably want to use embedded_hal_bus later on
+    let mut io_expander = Tca9535::new(i2c_device, async_tca9535::DeviceAddress::LLL);
+    io_expander
+        .set_configuration(Configuration::new(
+            true, true, true, true, true, true, true, true, true, true, true, true, false, false,
+            false, false,
+        ))
+        .await
+        .unwrap();
+
+    // Invert the polarity so true = pressed.
+    io_expander
+        .set_polarity_inversion(Polarity::new(
+            true, true, true, true, true, true, true, true, true, true, true, true, false, false,
+            false, false,
+        ))
+        .await
+        .unwrap();
+
+    let mut buttons_status = ButtonsStatus::new();
+
+    let publisher = BUTTONS_CHANNEL.publisher().unwrap();
+
+    loop {
+        Timer::after_millis(50).await;
+        let input = io_expander.read_input().await.unwrap();
+
+        let instant = Instant::now();
+
+        let changes = buttons_status.update(input, instant);
+
+        for update in changes.iter() {
+            if update.1.was_presed {
+                debug!(
+                    "{:?} was held for {}ms",
+                    Debug2Format(&update.0),
+                    update.1.duration.as_millis()
+                );
+            } else {
+                debug!("{:?} pressed", Debug2Format(&update.0));
+            }
+
+            // This will delete older events if the channel is full.
+            // That allows us to not lag behind too much at the cost of losing some inputs.
+            publisher.publish_immediate(*update);
+        }
+    }
 }
 
 const FRAME_BUFFER_SIZE: usize = 128 * 296;
