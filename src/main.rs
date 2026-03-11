@@ -1,13 +1,21 @@
 #![no_main]
 #![no_std]
 
+mod app;
 mod buttons;
+mod drawer;
 mod pins;
 
+extern crate alloc;
+
+use alloc::boxed::Box;
 use ariel_os::{
     debug::log::{Debug2Format, debug, info},
-    gpio, hal, i2c,
+    gpio::{self, IntEnabledInput, Output},
+    hal::{self, group_peripherals},
+    i2c,
     spi::{self, main::SpiDevice},
+    thread::block_on,
     time::{Delay, Instant, Timer},
 };
 use async_tca9535::{
@@ -17,16 +25,12 @@ use async_tca9535::{
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel,
 };
-use embedded_graphics::{
-    Drawable,
-    image::Image,
-    pixelcolor::BinaryColor,
-    prelude::{DrawTarget, Point},
-};
+use embedded_graphics::{pixelcolor::BinaryColor, prelude::DrawTarget};
 use embedded_hal_async::i2c::I2c as _;
-use tinybmp::Bmp;
+use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
+use ratatui::Terminal;
 
-use crate::buttons::ButtonsStatus;
+use crate::{app::App, buttons::ButtonsStatus, drawer::SsdTarget};
 
 const TARGET_I2C_ADDR: u8 = 0x6A;
 const WHO_AM_I_REG_ADDR: u8 = 0x14;
@@ -141,10 +145,13 @@ async fn main(peripherals: pins::I2cBus) {
     }
 }
 
-const FRAME_BUFFER_SIZE: usize = 128 * 296;
+group_peripherals!(Screen {
+    epd: pins::Epd,
+    light: pins::EpdLight
+});
 
 #[ariel_os::task(autostart, peripherals)]
-async fn screen(peripherals: pins::Epd) {
+async fn screen(peripherals: Screen) {
     static SPI_BUS: once_cell::sync::OnceCell<
         Mutex<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, hal::spi::main::Spi>,
     > = once_cell::sync::OnceCell::new();
@@ -154,19 +161,13 @@ async fn screen(peripherals: pins::Epd) {
     spi_config.frequency = const {
         spi::main::highest_freq_in(spi::main::Kilohertz::MHz(1)..=spi::main::Kilohertz::MHz(20))
     };
-    // spi_config.mode = spi::Mode::Mode0;
 
     info!("Configured SPI");
-    // spi_config.frequency = const {
-    //     spi::main::highest_freq_in(
-    //         spi::main::Kilohertz::kHz(1000)..=spi::main::Kilohertz::kHz(2000),
-    //     )
-    // };
 
     let spi_bus = pins::EpdSpi::new(
-        peripherals.spi_sck,
-        peripherals.spi_miso,
-        peripherals.spi_mosi,
+        peripherals.epd.spi_sck,
+        peripherals.epd.spi_miso,
+        peripherals.epd.spi_mosi,
         spi_config,
     );
 
@@ -174,139 +175,45 @@ async fn screen(peripherals: pins::Epd) {
 
     let _ = SPI_BUS.set(Mutex::new(spi_bus));
 
-    let cs_output = gpio::Output::new(peripherals.spi_cs, gpio::Level::High);
-    let dc = gpio::Output::new(peripherals.dc, gpio::Level::High);
-    let busy = gpio::Input::builder(peripherals.busy, gpio::Pull::Up)
+    let cs_output: gpio::Output = gpio::Output::new(peripherals.epd.spi_cs, gpio::Level::High);
+    let dc = gpio::Output::new(peripherals.epd.dc, gpio::Level::High);
+    let busy = gpio::Input::builder(peripherals.epd.busy, gpio::Pull::Up)
         .build_with_interrupt()
         .unwrap();
-    let reset = gpio::Output::new(peripherals.reset, gpio::Level::High);
+    let reset = gpio::Output::new(peripherals.epd.reset, gpio::Level::High);
+    let backlight = gpio::Output::new(peripherals.light.led, gpio::Level::Low);
 
     let spi_device = SpiDevice::new(SPI_BUS.get().unwrap(), cs_output);
 
-    // let config = ssd1680_rs::config::DisplayConfig {
-    //     width: 128,
-    //     height: 296,
-    //     gate_scanning_gd: false,
-    //     gate_scanning_sm: false,
-    //     gate_scanning_tb: false,
-    //     partial_refresh_sequence: 0xFC,
-    //     full_refresh_sequence: 0xF7,
-    //     border_waveform_control: VDBMode::GSTransition(true, LUTSelect::LUT1),
-    //     ram_content_for_display_update: UpdateRamOption::Normal,
-    //     s8_source_output_mode: true,
-    //     use_internal_temperature_sensor: true,
-    // };
-
     let config = ssd1680_rs::config::DisplayConfig::epd_290_t94();
 
-    let mut epd_controller =
+    let mut epd_controller: ssd1680_rs::driver_async::SSD1680<_, _, _, _, _> =
         ssd1680_rs::driver_async::SSD1680::new(reset, dc, busy, Delay, spi_device, config);
 
-    let mut draw_target = drawer::SsdTarget::new();
+    epd_controller.hw_init().await.unwrap();
 
-    // Include the BMP file data.
-    let bmp_data = include_bytes!("../hexacube.bmp");
+    let mut draw_target = drawer::SsdTarget::new(epd_controller);
 
-    // Parse the BMP file.
-    let bmp: Bmp<'_, BinaryColor> = Bmp::from_slice(bmp_data).unwrap();
-
-    draw_target.clear(BinaryColor::On);
-
-    info!("flushing display");
-    draw_target.flush(&mut epd_controller).await;
-
-    info!("full refresh");
-
-    // epd_controller.full_refresh().await.unwrap();
-    info!("full refresh done");
-
-    Timer::after_millis(500).await;
+    // Off = black
+    draw_target.clear(BinaryColor::Off);
+    draw_target.flush().await;
 
     info!("entering main loop");
 
-    loop {
-        draw_target.clear(BinaryColor::On);
-        // Draw the image with the top left corner at (10, 20) by wrapping it in
-        // an embedded-graphics `Image`.
-        Image::new(&bmp, Point::new(92, 0))
-            .draw(&mut draw_target)
-            .unwrap();
-
-        draw_target.flush(&mut epd_controller).await;
-
-        Timer::after(ariel_os::time::Duration::from_millis(10000)).await;
-    }
-}
-
-mod drawer {
-    use embedded_graphics::{
-        Pixel,
-        pixelcolor::BinaryColor,
-        prelude::{Dimensions, DrawTarget},
+    let config = EmbeddedBackendConfig {
+        flush_callback: Box::new(
+            |d: &mut SsdTarget<Output, Output, IntEnabledInput, Delay, SpiDevice>| {
+                block_on(d.flush());
+            },
+        ),
+        ..Default::default()
     };
-    use embedded_hal::digital::{InputPin, OutputPin};
-    use embedded_hal_async::{delay::DelayNs, digital::Wait, spi::SpiDevice};
-    use ssd1680_rs::driver_async::SSD1680;
 
-    pub struct SsdTarget {
-        pub frame_buffer: [u8; super::FRAME_BUFFER_SIZE / 8],
-    }
-    impl SsdTarget {
-        pub fn new() -> Self {
-            Self {
-                frame_buffer: [0u8; super::FRAME_BUFFER_SIZE / 8],
-            }
-        }
-        pub async fn flush<
-            RST: OutputPin,
-            DC: OutputPin,
-            BUSY: InputPin + Wait,
-            DELAY: DelayNs,
-            SPI: SpiDevice,
-        >(
-            &self,
-            driver: &mut SSD1680<RST, DC, BUSY, DELAY, SPI>,
-        ) {
-            driver.hw_init().await.unwrap();
+    let mut app = App::new(backlight);
+    let backend = EmbeddedBackend::new(&mut draw_target, config);
 
-            driver
-                .write_bw_bytes(&self.frame_buffer[0..(128 * 296 / 8) as usize])
-                .await
-                .unwrap();
-            driver.full_refresh().await.unwrap();
-            driver.enter_deep_sleep().await.unwrap();
-        }
-    }
+    let mut terminal = Terminal::new(backend).unwrap();
 
-    impl DrawTarget for SsdTarget {
-        type Color = BinaryColor;
-        type Error = core::convert::Infallible;
-
-        fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-        where
-            I: IntoIterator<Item = Pixel<Self::Color>>,
-        {
-            for Pixel(coord, color) in pixels {
-                let x = 127 - coord.y;
-                let y = coord.x;
-
-                let index = (y as usize) * 128 / 8 + (x as usize) / 8;
-
-                if color == BinaryColor::On {
-                    self.frame_buffer[index] |= 0x80 >> (x % 8);
-                } else {
-                    self.frame_buffer[index] &= !(0x80 >> (x % 8));
-                }
-            }
-            Ok(())
-        }
-    }
-    impl Dimensions for SsdTarget {
-        fn bounding_box(&self) -> embedded_graphics::primitives::Rectangle {
-            embedded_graphics::primitives::Rectangle::new(
-                embedded_graphics::prelude::Point::new(0, 0),
-                embedded_graphics::prelude::Size::new(296, 128),
-            )
-        }
-    }
+    let receiver = BUTTONS_CHANNEL.subscriber().unwrap();
+    app.run(&mut terminal, receiver).await;
 }
