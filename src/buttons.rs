@@ -1,3 +1,5 @@
+use core::fmt::Display;
+
 use ariel_os::time::{Duration, Instant};
 use async_tca9535::registers::Input;
 use heapless::Vec;
@@ -40,7 +42,7 @@ pub struct ButtonSatuChange {
     pub duration: Duration,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Button {
     Btn0,
     Btn1,
@@ -57,6 +59,29 @@ pub enum Button {
 }
 impl Button {
     pub const COUNT: usize = 12;
+
+    pub fn name(&self) -> &str {
+        match self {
+            Button::Btn0 => "0",
+            Button::Btn1 => "1",
+            Button::Btn2 => "2",
+            Button::Btn3 => "3",
+            Button::Btn4 => "4",
+            Button::Btn5 => "5",
+            Button::Btn6 => "6",
+            Button::Btn7 => "7",
+            Button::Btn8 => "8",
+            Button::Btn9 => "9",
+            Button::BtnYes => "YES",
+            Button::BtnNo => "NO",
+        }
+    }
+}
+
+impl Display for Button {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

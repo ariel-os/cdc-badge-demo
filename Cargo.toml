@@ -29,6 +29,13 @@ ssd1680-rs = { git = "https://github.com/nponsard/ssd1680-rs.git", features = [
   "async",
 ] }
 async-tca9535 = { version = "0.1.0", git = "https://github.com/nponsard/async-tca9535", rev = "ecc373c3890c01593f0a0c78c1a76d69489019cd" }
+mousefood = { version = "0.4.0", default-features = false, features = [
+  "fonts",
+] }
+embassy-futures = "0.1.2"
+ratatui = { version = "0.30.0", default-features = false, features = [
+  "all-widgets",
+] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
