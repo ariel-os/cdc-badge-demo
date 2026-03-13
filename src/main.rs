@@ -11,11 +11,10 @@ extern crate alloc;
 use alloc::boxed::Box;
 use ariel_os::{
     debug::log::{Debug2Format, debug, info},
-    gpio::{self, IntEnabledInput, Output},
+    gpio::{self},
     hal::{self, group_peripherals},
     i2c,
     spi::{self, main::SpiDevice},
-    thread::block_on,
     time::{Delay, Instant, Timer},
 };
 use async_tca9535::{
@@ -23,14 +22,18 @@ use async_tca9535::{
     registers::{Configuration, Polarity},
 };
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel,
+    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel, watch::Watch,
 };
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::DrawTarget};
 use embedded_hal_async::i2c::I2c as _;
 use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 
-use crate::{app::App, buttons::ButtonsStatus, drawer::SsdTarget};
+use crate::{
+    app::App,
+    buttons::ButtonsStatus,
+    drawer::{SsdTarget, SsdTargetManager},
+};
 
 const TARGET_I2C_ADDR: u8 = 0x6A;
 const WHO_AM_I_REG_ADDR: u8 = 0x14;
@@ -43,6 +46,8 @@ static BUTTONS_CHANNEL: PubSubChannel<
     4,
     1,
 > = PubSubChannel::new();
+
+static WATCH: Watch<CriticalSectionRawMutex, [u8; 4736], 1> = Watch::new();
 
 #[ariel_os::task(autostart, peripherals)]
 async fn main(peripherals: pins::I2cBus) {
@@ -192,20 +197,23 @@ async fn screen(peripherals: Screen) {
 
     epd_controller.hw_init().await.unwrap();
 
-    let mut draw_target = drawer::SsdTarget::new(epd_controller);
+    let sender = WATCH.sender();
+    let receiver = WATCH.receiver().unwrap();
+
+    let mut manager = SsdTargetManager::new(epd_controller, receiver);
+
+    let mut draw_target = drawer::SsdTarget::new(sender);
 
     // Off = black
     draw_target.clear(BinaryColor::Off);
-    draw_target.flush().await;
+    draw_target.flush();
 
     info!("entering main loop");
 
     let config = EmbeddedBackendConfig {
-        flush_callback: Box::new(
-            |d: &mut SsdTarget<Output, Output, IntEnabledInput, Delay, SpiDevice>| {
-                block_on(d.flush());
-            },
-        ),
+        flush_callback: Box::new(|d: &mut SsdTarget| {
+            d.flush();
+        }),
         ..Default::default()
     };
 
@@ -215,5 +223,9 @@ async fn screen(peripherals: Screen) {
     let mut terminal = Terminal::new(backend).unwrap();
 
     let receiver = BUTTONS_CHANNEL.subscriber().unwrap();
-    app.run(&mut terminal, receiver).await;
+
+    embassy_futures::join::join(manager.run(), async {
+        app.run(&mut terminal, receiver).await;
+    })
+    .await;
 }
