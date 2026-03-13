@@ -45,14 +45,14 @@ impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: 
         }
     }
 
-    pub fn flush(&self) {
+    pub fn flush(&self, frame_buffer: &[u8; FRAME_BUFFER_SIZE]) {
+        self.frame_buffer.lock(|fb| fb.replace(*frame_buffer));
         self.signal.signal(1);
     }
 
     pub async fn run(&self) {
         loop {
             self.signal.wait().await;
-
             self.inner_flush().await;
         }
     }
@@ -129,10 +129,10 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
 
     pub fn flush(&mut self) {
         if self.frame_buffer_changed {
-            self.manager
-                .frame_buffer
-                .lock(|fb| fb.replace(self.frame_buffer));
-            self.manager.flush();
+            // self.manager
+            //     .frame_buffer
+            //     .lock(|fb| fb.replace(self.frame_buffer));
+            self.manager.flush(&self.frame_buffer);
             self.frame_buffer_changed = false;
         }
     }
