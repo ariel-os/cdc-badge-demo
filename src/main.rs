@@ -47,6 +47,8 @@ static BUTTONS_CHANNEL: PubSubChannel<
     1,
 > = PubSubChannel::new();
 
+static WATCH: Watch<CriticalSectionRawMutex, [u8; 4736], 1> = Watch::new();
+
 #[ariel_os::task(autostart, peripherals)]
 async fn main(peripherals: pins::I2cBus) {
     info!("Hello World!");
@@ -152,8 +154,6 @@ group_peripherals!(Screen {
     epd: pins::Epd,
     light: pins::EpdLight
 });
-
-static WATCH: Watch<CriticalSectionRawMutex, [u8; 4736], 1> = Watch::new();
 
 #[ariel_os::task(autostart, peripherals)]
 async fn screen(peripherals: Screen) {

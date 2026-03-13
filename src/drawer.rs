@@ -1,9 +1,6 @@
-use core::cell::RefCell;
-
 use ariel_os::debug::log::debug;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
-    mutex::Mutex,
     watch::{Receiver, Sender},
 };
 use embedded_graphics::{
@@ -28,8 +25,8 @@ pub struct SsdTargetManager<
     DELAY: DelayNs,
     SPI: SpiDevice,
 > {
-    refresh_count: Mutex<CriticalSectionRawMutex, RefCell<u8>>,
-    driver: Mutex<CriticalSectionRawMutex, SSD1680<RST, DC, BUSY, DELAY, SPI>>,
+    refresh_count: u8,
+    driver: SSD1680<RST, DC, BUSY, DELAY, SPI>,
     receiver: Receiver<'a, CriticalSectionRawMutex, [u8; FRAME_BUFFER_SIZE], 1>,
 }
 impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
@@ -41,60 +38,44 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
         receiver: Receiver<'a, CriticalSectionRawMutex, [u8; FRAME_BUFFER_SIZE], 1>,
     ) -> Self {
         Self {
-            refresh_count: Mutex::new(RefCell::new(Self::REFRESH_AFTER)), // force a full refresh on first flush
-            driver: Mutex::new(driver),
+            refresh_count: Self::REFRESH_AFTER, // force a full refresh on first flush
+            driver,
             receiver,
         }
     }
+
     pub async fn run(&mut self) {
+        let mut frame_buffer;
         loop {
-            let fb = self.receiver.changed().await;
-            self.inner_flush(fb).await;
+            frame_buffer = self.receiver.changed().await;
+            debug!("flushing to display");
+
+            // driver.hw_init().await.unwrap();
+            // driver.wait_for_busy().await.unwrap();
+
+            self.driver.write_bw_bytes(&frame_buffer).await.unwrap();
+            self.driver.wait_for_busy().await.unwrap();
+
+            if self.refresh_count >= Self::REFRESH_AFTER {
+                debug!("Doing a full refresh");
+                // Somehow the full refresh reads from the RED memory.
+                self.driver.write_red_bytes(&frame_buffer).await.unwrap();
+                self.driver.wait_for_busy().await.unwrap();
+                self.driver.full_refresh().await.unwrap();
+
+                self.refresh_count = 0;
+            } else {
+                debug!("Doing a partial refresh");
+
+                self.driver.partial_refresh().await.unwrap();
+
+                self.refresh_count += 1;
+            }
+
+            debug!("Refresh count: {}", self.refresh_count);
+
+            // driver.enter_deep_sleep().await.unwrap();
         }
-    }
-
-    async fn inner_flush(&self, frame_buffer: [u8; FRAME_BUFFER_SIZE]) {
-        debug!("flushing to display");
-        let mut driver: embassy_sync::mutex::MutexGuard<
-            '_,
-            CriticalSectionRawMutex,
-            SSD1680<RST, DC, BUSY, DELAY, SPI>,
-        > = self.driver.lock().await;
-
-        // driver.hw_init().await.unwrap();
-        // driver.wait_for_busy().await.unwrap();
-
-        driver.write_bw_bytes(&frame_buffer).await.unwrap();
-        driver.wait_for_busy().await.unwrap();
-
-        if self
-            .refresh_count
-            .lock()
-            .await
-            .borrow()
-            .ge(&Self::REFRESH_AFTER)
-        {
-            debug!("Doing a full refresh");
-            // Somehow the full refresh reads from the RED memory.
-            driver.write_red_bytes(&frame_buffer).await.unwrap();
-            driver.wait_for_busy().await.unwrap();
-            driver.full_refresh().await.unwrap();
-
-            self.refresh_count.lock().await.replace(0);
-        } else {
-            debug!("Doing a partial refresh");
-
-            driver.partial_refresh().await.unwrap();
-
-            self.refresh_count.lock().await.replace_with(|c| *c + 1);
-        }
-
-        debug!(
-            "Refresh count: {}",
-            *self.refresh_count.lock().await.borrow()
-        );
-
-        // driver.enter_deep_sleep().await.unwrap();
     }
 }
 
