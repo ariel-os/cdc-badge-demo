@@ -15,7 +15,6 @@ use ariel_os::{
     hal::{self, group_peripherals},
     i2c,
     spi::{self, main::SpiDevice},
-    thread::block_on,
     time::{Delay, Instant, Timer},
 };
 use async_tca9535::{
@@ -30,7 +29,11 @@ use embedded_hal_async::i2c::I2c as _;
 use mousefood::{EmbeddedBackend, EmbeddedBackendConfig};
 use ratatui::Terminal;
 
-use crate::{app::App, buttons::ButtonsStatus, drawer::SsdTarget};
+use crate::{
+    app::App,
+    buttons::ButtonsStatus,
+    drawer::{SsdTarget, SsdTargetManager},
+};
 
 const TARGET_I2C_ADDR: u8 = 0x6A;
 const WHO_AM_I_REG_ADDR: u8 = 0x14;
@@ -156,6 +159,10 @@ async fn screen(peripherals: Screen) {
         Mutex<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, hal::spi::main::Spi>,
     > = once_cell::sync::OnceCell::new();
 
+    static MANAGER: once_cell::sync::OnceCell<
+        SsdTargetManager<Output, Output, IntEnabledInput, Delay, SpiDevice>,
+    > = once_cell::sync::OnceCell::new();
+
     info!("Starting EPD demo");
     let mut spi_config = hal::spi::main::Config::default();
     spi_config.frequency = const {
@@ -192,18 +199,21 @@ async fn screen(peripherals: Screen) {
 
     epd_controller.hw_init().await.unwrap();
 
-    let mut draw_target = drawer::SsdTarget::new(epd_controller);
+    let _ = MANAGER.set(drawer::SsdTargetManager::new(epd_controller));
+    let manager = MANAGER.get().unwrap();
+
+    let mut draw_target = drawer::SsdTarget::new(manager);
 
     // Off = black
     draw_target.clear(BinaryColor::Off);
-    draw_target.flush().await;
+    draw_target.flush();
 
     info!("entering main loop");
 
     let config = EmbeddedBackendConfig {
         flush_callback: Box::new(
             |d: &mut SsdTarget<Output, Output, IntEnabledInput, Delay, SpiDevice>| {
-                block_on(d.flush());
+                d.flush();
             },
         ),
         ..Default::default()
@@ -215,5 +225,9 @@ async fn screen(peripherals: Screen) {
     let mut terminal = Terminal::new(backend).unwrap();
 
     let receiver = BUTTONS_CHANNEL.subscriber().unwrap();
-    app.run(&mut terminal, receiver).await;
+
+    embassy_futures::join::join(manager.run(), async {
+        app.run(&mut terminal, receiver).await;
+    })
+    .await;
 }
