@@ -1,5 +1,7 @@
+use core::cell::RefCell;
+
 use ariel_os::debug::log::debug;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, signal::Signal};
 use embedded_graphics::{
     Pixel,
     pixelcolor::BinaryColor,
@@ -14,36 +16,42 @@ pub const HEIGHT: usize = 128;
 
 pub const FRAME_BUFFER_SIZE: usize = (WIDTH * HEIGHT) / 8;
 
-pub struct SsdTarget<
+pub struct SsdTargetManager<
     RST: OutputPin,
     DC: OutputPin,
     BUSY: InputPin + Wait,
     DELAY: DelayNs,
     SPI: SpiDevice,
 > {
-    frame_buffer: [u8; FRAME_BUFFER_SIZE],
-    frame_buffer_changed: bool,
-    refresh_count: u8,
+    refresh_count: Mutex<CriticalSectionRawMutex, RefCell<u8>>,
     driver: Mutex<CriticalSectionRawMutex, SSD1680<RST, DC, BUSY, DELAY, SPI>>,
+    signal: Signal<CriticalSectionRawMutex, [u8; FRAME_BUFFER_SIZE]>,
 }
 impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
-    SsdTarget<RST, DC, BUSY, DELAY, SPI>
+    SsdTargetManager<RST, DC, BUSY, DELAY, SPI>
 {
     const REFRESH_AFTER: u8 = 10;
     pub fn new(driver: SSD1680<RST, DC, BUSY, DELAY, SPI>) -> Self {
         Self {
-            refresh_count: Self::REFRESH_AFTER, // force a full refresh on first flush
+            refresh_count: Mutex::new(RefCell::new(Self::REFRESH_AFTER)), // force a full refresh on first flush
             driver: Mutex::new(driver),
-            frame_buffer: [0u8; FRAME_BUFFER_SIZE],
-            frame_buffer_changed: true,
+            signal: Signal::new(),
         }
     }
 
-    pub async fn flush(&mut self) {
-        if !self.frame_buffer_changed {
-            return;
-        }
+    pub fn flush(&self, frame_buffer: &[u8; FRAME_BUFFER_SIZE]) {
+        self.signal.signal(*frame_buffer);
+    }
 
+    pub async fn run(&self) {
+        loop {
+            let frame_buffer = self.signal.wait().await;
+
+            self.inner_flush(&frame_buffer).await;
+        }
+    }
+
+    async fn inner_flush(&self, frame_buffer: &[u8; FRAME_BUFFER_SIZE]) {
         debug!("flushing to display");
         let mut driver: embassy_sync::mutex::MutexGuard<
             '_,
@@ -54,34 +62,73 @@ impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: 
         // driver.hw_init().await.unwrap();
         // driver.wait_for_busy().await.unwrap();
 
-        driver.write_bw_bytes(&self.frame_buffer).await.unwrap();
+        driver.write_bw_bytes(frame_buffer).await.unwrap();
         driver.wait_for_busy().await.unwrap();
 
-        if self.refresh_count >= Self::REFRESH_AFTER {
+        if self
+            .refresh_count
+            .lock()
+            .await
+            .borrow()
+            .ge(&Self::REFRESH_AFTER)
+        {
             debug!("Doing a full refresh");
             // Somehow the full refresh reads from the RED memory.
-            driver.write_red_bytes(&self.frame_buffer).await.unwrap();
+            driver.write_red_bytes(frame_buffer).await.unwrap();
             driver.wait_for_busy().await.unwrap();
             driver.full_refresh().await.unwrap();
 
-            self.refresh_count = 0;
+            self.refresh_count.lock().await.replace(0);
         } else {
             debug!("Doing a partial refresh");
 
             driver.partial_refresh().await.unwrap();
 
-            self.refresh_count += 1;
+            self.refresh_count.lock().await.replace_with(|c| *c + 1);
         }
 
-        self.frame_buffer_changed = false;
-        debug!("Refresh count: {}", self.refresh_count);
+        debug!(
+            "Refresh count: {}",
+            *self.refresh_count.lock().await.borrow()
+        );
 
         // driver.enter_deep_sleep().await.unwrap();
     }
 }
 
-impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
-    DrawTarget for SsdTarget<RST, DC, BUSY, DELAY, SPI>
+pub struct SsdTarget<
+    'a,
+    RST: OutputPin,
+    DC: OutputPin,
+    BUSY: InputPin + Wait,
+    DELAY: DelayNs,
+    SPI: SpiDevice,
+> {
+    frame_buffer_changed: bool,
+    manager: &'a SsdTargetManager<RST, DC, BUSY, DELAY, SPI>,
+    frame_buffer: [u8; FRAME_BUFFER_SIZE],
+}
+impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
+    SsdTarget<'a, RST, DC, BUSY, DELAY, SPI>
+{
+    pub fn new(manager: &'a SsdTargetManager<RST, DC, BUSY, DELAY, SPI>) -> Self {
+        Self {
+            manager,
+            frame_buffer_changed: true,
+            frame_buffer: [0u8; FRAME_BUFFER_SIZE],
+        }
+    }
+
+    pub fn flush(&mut self) {
+        if self.frame_buffer_changed {
+            self.manager.flush(&self.frame_buffer);
+            self.frame_buffer_changed = false;
+        }
+    }
+}
+
+impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
+    DrawTarget for SsdTarget<'a, RST, DC, BUSY, DELAY, SPI>
 {
     type Color = BinaryColor;
     type Error = core::convert::Infallible;
@@ -108,11 +155,12 @@ impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: 
                 self.frame_buffer[index] &= !(0x80 >> (x % 8));
             }
         }
+
         Ok(())
     }
 }
-impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
-    Dimensions for SsdTarget<RST, DC, BUSY, DELAY, SPI>
+impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: SpiDevice>
+    Dimensions for SsdTarget<'a, RST, DC, BUSY, DELAY, SPI>
 {
     fn bounding_box(&self) -> embedded_graphics::primitives::Rectangle {
         embedded_graphics::primitives::Rectangle::new(
