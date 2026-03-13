@@ -39,15 +39,13 @@ impl<RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, SPI: 
         }
     }
 
-    pub fn flush(&self, frame_buffer: &[u8; FRAME_BUFFER_SIZE]) {
-        self.signal.signal(*frame_buffer);
+    pub fn flush(&self, frame_buffer: [u8; FRAME_BUFFER_SIZE]) {
+        self.signal.signal(frame_buffer);
     }
 
     pub async fn run(&self) {
         loop {
-            let frame_buffer = self.signal.wait().await;
-
-            self.inner_flush(&frame_buffer).await;
+            self.inner_flush(&self.signal.wait().await).await;
         }
     }
 
@@ -113,6 +111,7 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
 {
     pub fn new(manager: &'a SsdTargetManager<RST, DC, BUSY, DELAY, SPI>) -> Self {
         Self {
+            
             manager,
             frame_buffer_changed: true,
             frame_buffer: [0u8; FRAME_BUFFER_SIZE],
@@ -121,7 +120,7 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
 
     pub fn flush(&mut self) {
         if self.frame_buffer_changed {
-            self.manager.flush(&self.frame_buffer);
+            self.manager.flush(self.frame_buffer);
             self.frame_buffer_changed = false;
         }
     }
