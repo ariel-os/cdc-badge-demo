@@ -11,7 +11,7 @@ extern crate alloc;
 use alloc::boxed::Box;
 use ariel_os::{
     debug::log::{Debug2Format, debug, info},
-    gpio::{self, IntEnabledInput, Output},
+    gpio::{self},
     hal::{self, group_peripherals},
     i2c,
     spi::{self, main::SpiDevice},
@@ -22,7 +22,7 @@ use async_tca9535::{
     registers::{Configuration, Polarity},
 };
 use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel,
+    blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex, pubsub::PubSubChannel, watch::Watch,
 };
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::DrawTarget};
 use embedded_hal_async::i2c::I2c as _;
@@ -153,14 +153,12 @@ group_peripherals!(Screen {
     light: pins::EpdLight
 });
 
+static WATCH: Watch<CriticalSectionRawMutex, [u8; 4736], 1> = Watch::new();
+
 #[ariel_os::task(autostart, peripherals)]
 async fn screen(peripherals: Screen) {
     static SPI_BUS: once_cell::sync::OnceCell<
         Mutex<embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex, hal::spi::main::Spi>,
-    > = once_cell::sync::OnceCell::new();
-
-    static MANAGER: once_cell::sync::OnceCell<
-        SsdTargetManager<Output, Output, IntEnabledInput, Delay, SpiDevice>,
     > = once_cell::sync::OnceCell::new();
 
     info!("Starting EPD demo");
@@ -199,10 +197,12 @@ async fn screen(peripherals: Screen) {
 
     epd_controller.hw_init().await.unwrap();
 
-    let _ = MANAGER.set(drawer::SsdTargetManager::new(epd_controller));
-    let manager = MANAGER.get().unwrap();
+    let sender = WATCH.sender();
+    let receiver = WATCH.receiver().unwrap();
 
-    let mut draw_target = drawer::SsdTarget::new(manager);
+    let mut manager = SsdTargetManager::new(epd_controller, receiver);
+
+    let mut draw_target = drawer::SsdTarget::new(sender);
 
     // Off = black
     draw_target.clear(BinaryColor::Off);
@@ -211,11 +211,9 @@ async fn screen(peripherals: Screen) {
     info!("entering main loop");
 
     let config = EmbeddedBackendConfig {
-        flush_callback: Box::new(
-            |d: &mut SsdTarget<Output, Output, IntEnabledInput, Delay, SpiDevice>| {
-                d.flush();
-            },
-        ),
+        flush_callback: Box::new(|d: &mut SsdTarget| {
+            d.flush();
+        }),
         ..Default::default()
     };
 
