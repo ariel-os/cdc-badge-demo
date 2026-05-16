@@ -1,4 +1,4 @@
-use ariel_os::debug::log::debug;
+use ariel_os::log::debug;
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     watch::{Receiver, Sender},

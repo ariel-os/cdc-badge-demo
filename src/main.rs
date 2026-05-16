@@ -1,7 +1,9 @@
 #![no_main]
 #![no_std]
+mod apps;
 
 mod app;
+mod ble;
 mod buttons;
 mod drawer;
 mod pins;
@@ -10,10 +12,10 @@ extern crate alloc;
 
 use alloc::boxed::Box;
 use ariel_os::{
-    debug::log::{Debug2Format, debug, info},
     gpio::{self},
     hal::{self, group_peripherals},
     i2c,
+    log::{Debug2Format, debug, info},
     spi::{self, main::SpiDevice},
     time::{Delay, Instant, Timer},
 };
@@ -222,10 +224,17 @@ async fn screen(peripherals: Screen) {
 
     let mut terminal = Terminal::new(backend).unwrap();
 
-    let receiver = BUTTONS_CHANNEL.subscriber().unwrap();
+    let mut  receiver = BUTTONS_CHANNEL.subscriber().unwrap();
 
     embassy_futures::join::join(manager.run(), async {
-        app.run(&mut terminal, receiver).await;
+        app.run(&mut terminal, &mut receiver).await;
     })
     .await;
+}
+
+#[ariel_os::task(autostart)]
+async fn ble_run() {
+
+    info!("Starting BLE stack");
+    ble::run().await;
 }

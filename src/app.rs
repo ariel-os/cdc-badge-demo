@@ -1,10 +1,10 @@
-use core::{cell::RefCell, marker::PhantomData};
-
 use ariel_os::{
-    debug::log::{debug, info, warn},
     gpio::Output,
+    log::{Debug2Format, debug, error, info, warn},
     time::Timer,
 };
+use core::{cell::RefCell, marker::PhantomData};
+use embassy_futures::select::Either;
 use embassy_sync::{
     blocking_mutex::{
         self,
@@ -26,20 +26,28 @@ use ratatui::{
     widgets::{List, ListState, Paragraph, StatefulWidget, Widget, Wrap},
 };
 
-use crate::buttons::{Button, ButtonSatuChange};
+use crate::{
+    apps,
+    buttons::{Button, ButtonSatuChange},
+};
 
-pub struct App<B: Backend> {
+enum NextScreen {
+    Scanner,
+    Receiver,
+}
+
+pub struct App<'a, B: Backend> {
     _marker: PhantomData<B>,
     buttons_down: blocking_mutex::Mutex<
         CriticalSectionRawMutex,
         RefCell<heapless::Vec<Button, { Button::COUNT }>>,
     >,
     list_state: blocking_mutex::Mutex<CriticalSectionRawMutex, RefCell<ListState>>,
-    backlight: RefCell<Output>,
+    backlight: RefCell<Output<'a>>,
 }
 
-impl<B: Backend> App<B> {
-    pub fn new(backlight: Output) -> Self {
+impl<'a, B: Backend> App<'a, B> {
+    pub fn new(backlight: Output<'a>) -> Self {
         Self {
             _marker: PhantomData,
             buttons_down: blocking_mutex::Mutex::new(RefCell::new(heapless::Vec::new())),
@@ -51,15 +59,15 @@ impl<B: Backend> App<B> {
     }
 
     async fn handle_inputs<
-        'a,
+        'b,
         M: RawMutex,
         const CAP: usize,
         const SUBS: usize,
         const PUBS: usize,
     >(
         &self,
-        mut subscriber: Subscriber<'a, M, (Button, ButtonSatuChange), CAP, SUBS, PUBS>,
-    ) {
+        subscriber: &mut Subscriber<'b, M, (Button, ButtonSatuChange), CAP, SUBS, PUBS>,
+    ) -> NextScreen {
         loop {
             let event = subscriber.next_message_pure().await;
             self.buttons_down.lock(|v| {
@@ -75,53 +83,81 @@ impl<B: Backend> App<B> {
             });
             // Move on key up
             if event.1.was_presed {
-                match event.0 {
-                    Button::Btn2 => self.list_state.lock(|s| s.borrow_mut().select_previous()),
-                    Button::Btn8 => self.list_state.lock(|s| s.borrow_mut().select_next()),
+                let next = match event.0 {
+                    Button::Btn2 => {
+                        self.list_state.lock(|s| s.borrow_mut().select_previous());
+                        None
+                    }
+                    Button::Btn8 => {
+                        self.list_state.lock(|s| s.borrow_mut().select_next());
+                        None
+                    }
                     Button::BtnYes | Button::Btn5 => self.handle_enter().await,
-                    _ => {}
+                    _ => None,
+                };
+                if let Some(next_screen) = next {
+                    return next_screen;
                 }
             }
         }
     }
 
-    pub async fn handle_enter(&self) {
+    pub async fn handle_enter(&self) -> Option<NextScreen> {
         match self.list_state.lock(|s| s.borrow().selected()) {
             Some(1) => {
                 info!("Toggling backlight");
 
                 self.backlight.borrow_mut().toggle();
+                None
             }
+            Some(2) => Some(NextScreen::Scanner),
             Some(e) => {
                 info!("No function for list entry {}", e);
+                None
             }
             None => {
                 warn!("ListState has None selected");
+                None
             }
         }
     }
 
-    pub async fn run<'a, M: RawMutex, const CAP: usize, const SUBS: usize, const PUBS: usize>(
+    pub async fn run<'b, M: RawMutex, const CAP: usize, const SUBS: usize, const PUBS: usize>(
         &mut self,
         terminal: &mut Terminal<B>,
-        subscriber: Subscriber<'a, M, (Button, ButtonSatuChange), CAP, SUBS, PUBS>,
+        subscriber: &mut Subscriber<'b, M, (Button, ButtonSatuChange), CAP, SUBS, PUBS>,
     ) where
         B::Error: 'static,
     {
-        embassy_futures::join::join(self.handle_inputs(subscriber), async {
-            debug!("Running the Tabs app");
-            loop {
-                terminal
-                    .draw(|frame| frame.render_widget(&*self, frame.area()))
-                    .unwrap();
-                Timer::after_millis(100).await
+        loop {
+            match embassy_futures::select::select(self.handle_inputs(subscriber), async {
+                debug!("Running the Tabs app");
+                loop {
+                    if let Err(e) = terminal.draw(|frame| frame.render_widget(&*self, frame.area()))
+                    {
+                        return e;
+                    }
+                    Timer::after_millis(100).await
+                }
+            })
+            .await
+            {
+                Either::First(next) => match next {
+                    NextScreen::Receiver => {}
+                    NextScreen::Scanner => {
+                        let mut scanner = apps::scanner::App::new();
+                        scanner.run(terminal, subscriber).await;
+                    }
+                },
+                Either::Second(res) => {
+                    error!("Terminal draw error :{:?}", Debug2Format(&res))
+                }
             }
-        })
-        .await;
+        }
     }
 }
 
-impl<B: Backend> Widget for &App<B> {
+impl<'a, B: Backend> Widget for &App<'a, B> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
         let vertical = Layout::vertical([Length(1), Min(1), Length(1)]);
@@ -136,7 +172,7 @@ impl<B: Backend> Widget for &App<B> {
         let items: [Line; 4] = [
             "Item 1".into(),
             Line::from_iter([Span::from("Backlight: "), Span::from(led_status)]),
-            "Item 3".into(),
+            "BLE Scanner".into(),
             "Item 4".into(),
         ];
         let list = List::new(items)

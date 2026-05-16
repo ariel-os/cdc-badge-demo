@@ -1,7 +1,7 @@
 imports:
   - git:
       url: https://github.com/ariel-os/ariel-os
-      commit: 87951b84359cc77622013c5613158732e1c1e872 # BLE support for esp
+      commit: e51e701e265c3217d3d35bcc2474b73a91b66a6f
     dldir: ariel-os
 
 apps:
@@ -10,10 +10,12 @@ apps:
       - espressif-esp32-s3-devkitc-1
     selects:
       - alloc
+      - ble-central
+      - ble-peripheral
     env:
       global:
-        heapsize_required: 
-        - $(128*1024)
+        heapsize_required:
+          - $(128*1024)
     # env:
     #   global:
     #     executor_stacksize_required:
