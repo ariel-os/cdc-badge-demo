@@ -22,7 +22,6 @@ use trouble_host::{
     prelude::{DefaultPacketPool, FromGatt, Peripheral, appearance, gatt_server, gatt_service},
     scan::Scanner,
 };
-
 pub const MAX_TX_PACKET_SIZE: usize = 64;
 const NAME: &str = "Ariel OS CDC badge";
 pub type GattMessage = heapless::String<{ crate::ble::MAX_TX_PACKET_SIZE }>;
@@ -50,8 +49,8 @@ struct Server {
 
 #[gatt_service(uuid = "fd544724-0d14-4ecc-b4b5-65f9d0ee1fe3")]
 struct WriteService {
-    #[characteristic(uuid = "fd544724-0d14-4ecc-b4b5-65f9cafecafe", write_without_response)]
-    write_data: [u8; MAX_TX_PACKET_SIZE],
+    #[characteristic(uuid = "fd544724-0d14-4ecc-b4b5-65f9cafecafe", write)]
+    write_data: heapless::Vec<u8, MAX_TX_PACKET_SIZE>,
 }
 
 pub fn scanned_device_receiver<'a>() -> Receiver<'a, CriticalSectionRawMutex, Contact, 32> {
@@ -113,7 +112,7 @@ async fn gatt_events_task(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
 ) -> Result<(), Error> {
-    let write_data = server.write_service.write_data;
+    let mut dirty_message = false;
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
@@ -121,6 +120,10 @@ async fn gatt_events_task(
                 break;
             }
             GattConnectionEvent::Gatt { event } => {
+                let payload = event.payload();
+
+                let incoming = payload.incoming();
+                info!("[gatt] AttClient: {:?}", incoming);
                 match &event {
                     GattEvent::Other(event) => {
                         match event.payload().incoming() {
@@ -162,7 +165,7 @@ async fn gatt_events_task(
                         warn!("[gatt] Read Event to Characteristic: {:?}", event.handle());
                     }
                     GattEvent::Write(event) => {
-                        if event.handle() == write_data.handle {
+                        if event.handle() == server.write_service.write_data.handle {
                             let data = event.data();
                             info!("[gatt] Write Event to Characteristic: {:?}", data);
                             let len = data.len().min(MAX_TX_PACKET_SIZE);
@@ -172,7 +175,12 @@ async fn gatt_events_task(
                             if err.is_err() {
                                 warn!("[gatt] error extending vec, dropping packet");
                             } else {
-                                TX_CHANNEL.sender().send(vec);
+                                if let Ok(message) = heapless::String::from_utf8(vec) {
+                                    info!("received message: {}", message);
+                                    TX_CHANNEL.send(message).await;
+                                } else {
+                                    warn!("Couldn't parse utf-8 message");
+                                }
                             }
                         }
                     }

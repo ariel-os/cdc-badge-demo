@@ -111,6 +111,7 @@ impl<'a, B: Backend> App<'a, B> {
                 None
             }
             Some(2) => Some(NextScreen::Scanner),
+            Some(3) => Some(NextScreen::Receiver),
             Some(e) => {
                 info!("No function for list entry {}", e);
                 None
@@ -143,7 +144,10 @@ impl<'a, B: Backend> App<'a, B> {
             .await
             {
                 Either::First(next) => match next {
-                    NextScreen::Receiver => {}
+                    NextScreen::Receiver => {
+                        let mut scanner = apps::receiver::App::new();
+                        scanner.run(terminal, subscriber).await;
+                    }
                     NextScreen::Scanner => {
                         let mut scanner = apps::scanner::App::new();
                         scanner.run(terminal, subscriber).await;
@@ -173,7 +177,7 @@ impl<'a, B: Backend> Widget for &App<'a, B> {
             "Item 1".into(),
             Line::from_iter([Span::from("Backlight: "), Span::from(led_status)]),
             "BLE Scanner".into(),
-            "Item 4".into(),
+            "BLE GATT receiver".into(),
         ];
         let list = List::new(items)
             .style(Color::White)
