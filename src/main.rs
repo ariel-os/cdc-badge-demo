@@ -224,7 +224,7 @@ async fn screen(peripherals: Screen) {
 
     let mut terminal = Terminal::new(backend).unwrap();
 
-    let mut  receiver = BUTTONS_CHANNEL.subscriber().unwrap();
+    let mut receiver = BUTTONS_CHANNEL.subscriber().unwrap();
 
     embassy_futures::join::join(manager.run(), async {
         app.run(&mut terminal, &mut receiver).await;
@@ -234,7 +234,6 @@ async fn screen(peripherals: Screen) {
 
 #[ariel_os::task(autostart)]
 async fn ble_run() {
-
     info!("Starting BLE stack");
     ble::run().await;
 }

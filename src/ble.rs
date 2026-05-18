@@ -3,10 +3,10 @@ use ariel_os::log::{Debug2Format, error, info, trace, warn};
 use ariel_os::time::{Duration, Instant};
 use bt_hci::param::{BdAddr, LeAdvReportsIter};
 use embassy_futures::join::join;
-use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::channel::Channel;
-use embassy_sync::watch::Watch;
 use heapless::Vec;
+use trouble_host::att::AttReq;
 use trouble_host::connection::{PhySet, ScanConfig};
 use trouble_host::prelude::EventHandler;
 use trouble_host::scan::Scanner;
@@ -17,7 +17,7 @@ use trouble_host::{
     gatt::{GattConnection, GattConnectionEvent, GattEvent},
     prelude::{DefaultPacketPool, FromGatt, Peripheral, appearance, gatt_server, gatt_service},
 };
-pub const MAX_TX_PACKET_SIZE: usize = 32;
+pub const MAX_TX_PACKET_SIZE: usize = 64;
 #[derive(Debug, Clone)]
 pub struct Contact {
     pub addr: BdAddr,
@@ -34,8 +34,8 @@ pub struct ContactData {
 //     Mutex::new(Cell::new(FnvIndexMap::new()));
 
 pub static CONTACTS_CHANNEL: Channel<CriticalSectionRawMutex, Contact, 32> = Channel::new();
-pub static TX_CHANNEL: Watch<CriticalSectionRawMutex, Vec<u8, MAX_TX_PACKET_SIZE>, 8> =
-    Watch::new();
+pub static TX_CHANNEL: Channel<CriticalSectionRawMutex, heapless::String<MAX_TX_PACKET_SIZE>, 10> =
+    Channel::new();
 
 const NAME: &str = "Ariel OS CDC badge";
 
@@ -47,8 +47,8 @@ struct Server {
 
 #[gatt_service(uuid = "fd544724-0d14-4ecc-b4b5-65f9d0ee1fe3")]
 struct WriteService {
-    #[characteristic(uuid = "fd544724-0d14-4ecc-b4b5-65f9cafecafe", write_without_response)]
-    write_data: [u8; MAX_TX_PACKET_SIZE],
+    #[characteristic(uuid = "fd544724-0d14-4ecc-b4b5-65f9cafecafe", write)]
+    write_data: heapless::Vec<u8, MAX_TX_PACKET_SIZE>,
 }
 
 pub async fn run() {
@@ -102,7 +102,7 @@ async fn gatt_events_task(
     server: &Server<'_>,
     conn: &GattConnection<'_, '_, DefaultPacketPool>,
 ) -> Result<(), Error> {
-    let write_data = server.write_service.write_data;
+    let mut dirty_message = false;
     loop {
         match conn.next().await {
             GattConnectionEvent::Disconnected { reason } => {
@@ -110,15 +110,56 @@ async fn gatt_events_task(
                 break;
             }
             GattConnectionEvent::Gatt { event } => {
+                let payload = event.payload();
+
+                let incoming = payload.incoming();
+                info!("[gatt] AttClient: {:?}", incoming);
                 match &event {
                     GattEvent::Other(event) => {
-                        warn!("[gatt] Other event : {:?}", event.payload().handle());
+                        match event.payload().incoming() {
+                            trouble_host::att::AttClient::Request(AttReq::PrepareWrite {
+                                handle,
+                                offset: _,
+                                value: _,
+                            }) => {
+                                if handle == server.write_service.write_data.handle {
+                                    dirty_message = true;
+                                }
+                            }
+                            trouble_host::att::AttClient::Request(AttReq::ExecuteWrite {
+                                flags: _,
+                            }) => {
+                                if dirty_message {
+                                    match server.write_service.write_data.get(server) {
+                                        Ok(message) => {
+                                            if let Ok(message) =
+                                                heapless::String::from_utf8(message)
+                                            {
+                                                info!("received message: {}", message);
+                                                TX_CHANNEL.send(message).await;
+                                            } else {
+                                                warn!("Couldn't parse utf-8 message");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "Couldn't get service message: {:?}",
+                                                Debug2Format(&e)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                // do nothing
+                            }
+                        };
                     }
                     GattEvent::Read(event) => {
                         warn!("[gatt] Read Event to Characteristic: {:?}", event.handle());
                     }
                     GattEvent::Write(event) => {
-                        if event.handle() == write_data.handle {
+                        if event.handle() == server.write_service.write_data.handle {
                             let data = event.data();
                             info!("[gatt] Write Event to Characteristic: {:?}", data);
                             let len = data.len().min(MAX_TX_PACKET_SIZE);
@@ -128,7 +169,12 @@ async fn gatt_events_task(
                             if err.is_err() {
                                 warn!("[gatt] error extending vec, dropping packet");
                             } else {
-                                TX_CHANNEL.sender().send(vec);
+                                if let Ok(message) = heapless::String::from_utf8(vec) {
+                                    info!("received message: {}", message);
+                                    TX_CHANNEL.send(message).await;
+                                } else {
+                                    warn!("Couldn't parse utf-8 message");
+                                }
                             }
                         }
                     }
