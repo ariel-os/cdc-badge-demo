@@ -1,4 +1,4 @@
-use core::{cell::RefCell, cmp, marker::PhantomData};
+use core::{cell::RefCell, cmp, marker::PhantomData, sync::atomic::AtomicBool};
 
 use alloc::{
     format,
@@ -7,7 +7,7 @@ use alloc::{
 };
 use ariel_os::{
     log::{Debug2Format, debug, error, info, warn},
-    time::{Instant, Timer},
+    time::Timer,
 };
 use bt_hci::param::BdAddr;
 use embassy_futures::select::Either3;
@@ -21,9 +21,9 @@ use embassy_sync::{
 };
 use heapless::index_map::FnvIndexMap;
 use ratatui::{
-    Frame, Terminal,
+    Terminal,
     buffer::Buffer,
-    layout::{Constraint, Layout, Margin, Rect},
+    layout::{Constraint, Layout, Rect},
     prelude::Backend,
     style::{
         Color, Style, Stylize,
@@ -58,6 +58,8 @@ pub struct App<B: Backend> {
         CriticalSectionRawMutex,
         RefCell<FnvIndexMap<BdAddr, ContactData, 32>>,
     >,
+
+    only_show_devices_with_names: AtomicBool,
 }
 
 impl<B: Backend> App<B> {
@@ -70,6 +72,7 @@ impl<B: Backend> App<B> {
             )),
             // scroll_state: blocking_mutex::sMutex::new(RefCell::new(ScrollbarState::default())),
             contacts: blocking_mutex::Mutex::new(RefCell::new(FnvIndexMap::new())),
+            only_show_devices_with_names: AtomicBool::new(true),
         }
     }
 
@@ -81,6 +84,13 @@ impl<B: Backend> App<B> {
         loop {
             let contact = receiver.receive().await;
             {
+                if self
+                    .only_show_devices_with_names
+                    .load(core::sync::atomic::Ordering::Acquire)
+                    && contact.data.name.is_none()
+                {
+                    continue;
+                }
                 self.contacts.lock(|contacts_ref| {
                     let mut contacts = contacts_ref.borrow_mut();
                     if let Some(c) = contacts.get_mut(&contact.addr) {
@@ -144,6 +154,14 @@ impl<B: Backend> App<B> {
                         self.list_state.lock(|s| s.borrow_mut().select_next());
                         // self.scroll_state.lock(|s| s.borrow_mut().next());
 
+                        None
+                    }
+                    Button::Btn9 => {
+                        self.only_show_devices_with_names.update(
+                            core::sync::atomic::Ordering::Release,
+                            core::sync::atomic::Ordering::Acquire,
+                            |v| !v,
+                        );
                         None
                     }
                     Button::BtnYes | Button::Btn5 => self.handle_enter().await,
@@ -228,7 +246,7 @@ impl<B: Backend> Widget for &App<B> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min};
         let vertical = Layout::vertical([Length(1), Min(1), Length(1)]);
-        let [header_area, center_area, _footer_area] = vertical.areas(area);
+        let [header_area, center_area, footer_area] = vertical.areas(area);
         let horizontal = Layout::horizontal([Min(1), Length(1)]);
         let [inner_area, scroll_area] = horizontal.areas(center_area);
 
@@ -283,5 +301,20 @@ impl<B: Backend> Widget for &App<B> {
             .wrap(Wrap { trim: true })
             .centered()
             .render(header_area, buf);
+
+        let mut footer_items: Vec<String> = Vec::new();
+
+        if self
+            .only_show_devices_with_names
+            .load(core::sync::atomic::Ordering::Acquire)
+        {
+            footer_items.push("Only showing devices with names".to_string());
+        }
+
+        let footer: Line = Line::from_iter(footer_items.iter());
+
+        Paragraph::new(footer)
+            .wrap(Wrap { trim: true })
+            .render(footer_area, buf);
     }
 }
