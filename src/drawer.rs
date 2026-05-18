@@ -20,7 +20,6 @@ pub const HEIGHT: usize = 128;
 pub const FRAME_BUFFER_SIZE: usize = (WIDTH * HEIGHT) / 8;
 pub type FrameBuffer = [u8; FRAME_BUFFER_SIZE];
 
-
 /// This receives the frambuffer (from an [`embassy_sync::watch::Watch`]) and sends it to the display.
 pub struct DisplayController<
     'a,
