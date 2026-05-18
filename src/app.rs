@@ -104,14 +104,14 @@ impl<'a, B: Backend> App<'a, B> {
 
     pub async fn handle_enter(&self) -> Option<NextScreen> {
         match self.list_state.lock(|s| s.borrow().selected()) {
-            Some(1) => {
+            Some(0) => Some(NextScreen::Scanner),
+            Some(1) => Some(NextScreen::Receiver),
+            Some(2) => {
                 info!("Toggling backlight");
 
                 self.backlight.borrow_mut().toggle();
                 None
             }
-            Some(2) => Some(NextScreen::Scanner),
-            Some(3) => Some(NextScreen::Receiver),
             Some(e) => {
                 info!("No function for list entry {}", e);
                 None
@@ -173,11 +173,10 @@ impl<'a, B: Backend> Widget for &App<'a, B> {
             "OFF"
         };
 
-        let items: [Line; 4] = [
-            "Item 1".into(),
-            Line::from_iter([Span::from("Backlight: "), Span::from(led_status)]),
+        let items: [Line; 3] = [
             "BLE Scanner".into(),
             "BLE GATT receiver".into(),
+            Line::from_iter([Span::from("Backlight: "), Span::from(led_status)]),
         ];
         let list = List::new(items)
             .style(Color::White)
@@ -187,7 +186,7 @@ impl<'a, B: Backend> Widget for &App<'a, B> {
             StatefulWidget::render(list, inner_area, buf, &mut s.borrow_mut());
         });
 
-        Paragraph::new("Menu demo ".bg(BLACK).fg(WHITE))
+        Paragraph::new("CDC badge demo".bg(BLACK).fg(WHITE))
             .wrap(Wrap { trim: true })
             .centered()
             .render(header_area, buf);
