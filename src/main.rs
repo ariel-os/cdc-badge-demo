@@ -34,7 +34,7 @@ use ratatui::Terminal;
 use crate::{
     app::App,
     buttons::ButtonsStatus,
-    drawer::{DisplayTarget, DisplayController},
+    drawer::{DisplayController, DisplayTarget},
 };
 
 const TARGET_I2C_ADDR: u8 = 0x6A;
