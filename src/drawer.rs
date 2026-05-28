@@ -20,6 +20,8 @@ pub const HEIGHT: usize = 128;
 pub const FRAME_BUFFER_SIZE: usize = (WIDTH * HEIGHT) / 8;
 pub type FrameBuffer = [u8; FRAME_BUFFER_SIZE];
 
+
+/// This receives the frambuffer (from an [`embassy_sync::watch::Watch`]) and sends it to the display.
 pub struct DisplayController<
     'a,
     RST: OutputPin,
@@ -47,6 +49,7 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
         }
     }
 
+    /// This needs to continuously run in order to send the updates to the screen.
     pub async fn run(&mut self) {
         let mut frame_buffer;
         loop {
@@ -82,6 +85,8 @@ impl<'a, RST: OutputPin, DC: OutputPin, BUSY: InputPin + Wait, DELAY: DelayNs, S
     }
 }
 
+/// Target for embedded graphics to draw to, this avoids blocking the execution for too long by sending the updated frambuffer through an [`embassy_sync::watch::Watch`].
+/// The frambuffer is then received by [`DisplayController`] that asynchronously sends it to the display.
 pub struct DisplayTarget<'a> {
     frame_buffer_changed: bool,
     sender: Sender<'a, CriticalSectionRawMutex, FrameBuffer, 1>,
@@ -96,6 +101,8 @@ impl<'a> DisplayTarget<'a> {
         }
     }
 
+    /// Send the framebuffer to be displayed on the screen.
+    /// If no changes have happened since the last call to `flush`, the framebuffer won't be sent.
     pub fn flush(&mut self) {
         if self.frame_buffer_changed {
             self.sender.send(self.frame_buffer);
