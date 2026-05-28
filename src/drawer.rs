@@ -12,7 +12,7 @@ use embedded_graphics::{
 };
 use ssd1680_rs::driver_async::SSD1680;
 
-use ariel_os::debug::log::debug;
+use ariel_os::log::debug;
 
 pub const WIDTH: usize = 296;
 pub const HEIGHT: usize = 128;
