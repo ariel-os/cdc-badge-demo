@@ -34,7 +34,7 @@ checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 
 [[package]]
 name = "ariel-os"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-boards",
  "ariel-os-buildinfo",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-alloc"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-log",
  "ariel-os-utils",
@@ -75,21 +75,21 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-buildinfo"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-utils",
 ]
 
 [[package]]
 name = "ariel-os-debug"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "featurecomb",
 ]
 
 [[package]]
 name = "ariel-os-embassy"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-boards",
  "ariel-os-buildinfo",
@@ -123,7 +123,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-embassy-common"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-buildinfo",
  "ariel-os-utils",
@@ -137,7 +137,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-esp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-log",
@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-hal"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-esp",
@@ -182,7 +182,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-identity"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-hal",
@@ -190,7 +190,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-log"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-debug",
  "featurecomb",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-macros"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-native"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-buildinfo",
  "ariel-os-debug",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-nrf"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-log",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-power"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "cortex-m",
  "esp-hal",
@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-rp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-log",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-rt"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-alloc",
  "ariel-os-debug",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-stm32"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "ariel-os-embassy-common",
  "ariel-os-stm32-mapping",
@@ -296,14 +296,14 @@ dependencies = [
 
 [[package]]
 name = "ariel-os-stm32-mapping"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "embassy-stm32",
 ]
 
 [[package]]
 name = "ariel-os-utils"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "const-str",
  "const_panic",
@@ -3357,8 +3357,8 @@ source = "git+https://github.com/ariel-os/embassy?rev=603583d9#603583d94cb7ba14b
 
 [[patch.unused]]
 name = "embassy-net"
-version = "0.8.0"
-source = "git+https://github.com/ariel-os/embassy?rev=3b185bf1b3852867e4b932456600621f86f78bce#3b185bf1b3852867e4b932456600621f86f78bce"
+version = "0.9.1"
+source = "git+https://github.com/ariel-os/embassy?rev=37683fe299f12028e5a77af9f742f496da08afcd#37683fe299f12028e5a77af9f742f496da08afcd"
 
 [[patch.unused]]
 name = "esp-println"
