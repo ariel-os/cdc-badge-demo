@@ -41,12 +41,6 @@ use crate::{
     buttons::{Button, ButtonSatuChange},
 };
 
-
-
-
-
-
-
 #[derive(Debug)]
 pub enum NextScreen {
     Back,

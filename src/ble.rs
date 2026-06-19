@@ -2,7 +2,7 @@ use alloc::string::String;
 
 use crate::hid::KeypadReport;
 use ariel_os::{
-    log::{Debug2Format, error, info, trace, warn},
+    log::{Debug2Format, debug, error, info, trace, warn},
     time::{Duration, Instant},
 };
 use bt_hci::param::{BdAddr, LeAdvReportsIter};
@@ -20,12 +20,12 @@ use trouble_host::{
     gap::{GapConfig, PeripheralConfig},
     gatt::{GattConnection, GattConnectionEvent, GattEvent},
     prelude::{
-        DefaultPacketPool, EventHandler, FromGatt, Peripheral, appearance, gatt_server,
-        gatt_service, service,
+        AdvertisementParameters, DefaultPacketPool, EventHandler, FromGatt, Peripheral, PhyKind,
+        TxPower, appearance, gatt_server, gatt_service, service,
     },
     scan::Scanner,
 };
-use usbd_hid::descriptor::SerializedDescriptor;
+use usbd_hid::descriptor::{AsInputReport, SerializedDescriptor};
 
 pub const MAX_TX_PACKET_SIZE: usize = 64;
 const NAME: &str = "Ariel OS CDC badge";
@@ -33,6 +33,7 @@ pub type GattMessage = heapless::String<{ crate::ble::MAX_TX_PACKET_SIZE }>;
 
 static SCANNED_DEVICES_CHANNEL: Channel<CriticalSectionRawMutex, Contact, 32> = Channel::new();
 static TX_CHANNEL: Channel<CriticalSectionRawMutex, GattMessage, 10> = Channel::new();
+pub static KEY_CHANNEL: Channel<CriticalSectionRawMutex, [u8; 6], 10> = Channel::new();
 
 #[derive(Debug, Clone)]
 pub struct Contact {
@@ -97,29 +98,53 @@ pub async fn run() {
     }))
     .unwrap();
     let printer = DiscorveryHandler {};
-    let mut scanner = Scanner::new(host.central);
+    // let mut scanner = Scanner::new(host.central);
 
-    let config = ScanConfig::<'_> {
-        active: true,
-        phys: PhySet::M1,
+    // let config = ScanConfig::<'_> {
+    //     active: true,
+    //     phys: PhySet::M1,
 
-        // There's an issue with the Duration https://github.com/embassy-rs/bt-hci/pull/74
-        // Workaround is to multiply the value by 16.
+    //     // There's an issue with the Duration https://github.com/embassy-rs/bt-hci/pull/74
+    //     // Workaround is to multiply the value by 16.
 
-        // scan for 3 ms every 10 ms
-        interval: Duration::from_millis(10 * 16),
-        window: Duration::from_millis(3 * 16),
-        ..Default::default()
-    };
+    //     // scan for 3 ms every 10 ms
+    //     interval: Duration::from_millis(10 * 16),
+    //     window: Duration::from_millis(3 * 16),
+    //     ..Default::default()
+    // };
 
     info!("Starting advertising");
     let _ = join(host.runner.run_with_handler(&printer), async {
-        let mut _session = scanner.scan(&config).await.unwrap();
+        // let mut _session = scanner.scan(&config).await.unwrap();
         loop {
             match advertise(NAME, &mut host.peripheral, &server).await {
                 Ok(conn) => {
+                    let keypad = async {
+                        loop {
+                            let keycodes = KEY_CHANNEL.receive().await;
+                            let mut buf = [0u8; 8];
+
+                            let report = KeypadReport {
+                                keycodes,
+                                ..Default::default()
+                            };
+                            let n = report.serialize(&mut buf).unwrap();
+
+                            debug!("report buf: {:?}", buf);
+                            server
+                                .hid_service
+                                .input_keyboard
+                                .notify(&conn, &buf)
+                                .await
+                                .map_err(|e| error!("Failed to notify HID report: {:?}", e))
+                                .unwrap();
+                        }
+                    };
                     // set up tasks when the connection is established to a central, so they don't run when no one is connected.
-                    gatt_events_task(&server, &conn).await.unwrap();
+                    let res =
+                        embassy_futures::join::join(gatt_events_task(&server, &conn), keypad).await;
+
+                    info!("res : {:?}", Debug2Format(&res));
                 }
                 Err(e) => {
                     panic!("[adv] error: {:?}", e);
@@ -238,14 +263,28 @@ async fn advertise<'a, 'b, C: Controller>(
     AdStructure::encode_slice(
         &[
             AdStructure::Flags(LE_GENERAL_DISCOVERABLE | BR_EDR_NOT_SUPPORTED),
-            // AdStructure::ServiceUuids16(&[[0x0f, 0x18]]),
+            AdStructure::ServiceUuids16(&[service::HUMAN_INTERFACE_DEVICE.to_le_bytes()]),
             AdStructure::CompleteLocalName(name.as_bytes()),
+            AdStructure::Unknown {
+                ty: 0x19, // Appearance
+                data: &appearance::human_interface_device::KEYBOARD.to_le_bytes(),
+            },
         ],
         &mut advertiser_data[..],
     )?;
+
+    let advertise_config = AdvertisementParameters {
+        primary_phy: PhyKind::Le2M,
+        secondary_phy: PhyKind::Le2M,
+        tx_power: TxPower::Plus8dBm,
+        interval_min: Duration::from_millis(200),
+        interval_max: Duration::from_millis(200),
+        ..Default::default()
+    };
+
     let advertiser = peripheral
         .advertise(
-            &Default::default(),
+            &advertise_config,
             Advertisement::ConnectableScannableUndirected {
                 adv_data: &advertiser_data[..],
                 scan_data: &[],

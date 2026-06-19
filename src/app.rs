@@ -70,7 +70,7 @@ impl<'a, B: Backend> App<'a, B> {
     ) -> NextScreen {
         loop {
             let event = subscriber.next_message_pure().await;
-            self.buttons_down.lock(|v| {
+            let buttons_down = self.buttons_down.lock(|v| {
                 let mut buttons_down = v.borrow_mut();
                 if event.1.was_presed {
                     let index = buttons_down.iter().position(|b| *b == event.0);
@@ -80,7 +80,34 @@ impl<'a, B: Backend> App<'a, B> {
                 } else {
                     buttons_down.push(event.0).unwrap();
                 }
+
+                buttons_down.clone()
             });
+
+            let mut keys = [0u8; 6];
+            let mut index = 0;
+
+            for b in buttons_down {
+                let key = match b {
+                    Button::Btn1 => {
+                        Some(0x5A) // 2
+                    }
+                    Button::Btn3 => {
+                        Some(0x60) // 8
+                    }
+                    _ => None,
+                };
+
+                if let Some(k) = key
+                    && let Some(dest) = keys.get_mut(index)
+                {
+                    *dest = k;
+                    index += 1;
+                }
+            }
+
+            let _ = crate::ble::KEY_CHANNEL.try_send(keys);
+
             // Move on key up
             if event.1.was_presed {
                 let next = match event.0 {
