@@ -145,12 +145,10 @@ impl<'a, B: Backend> App<'a, B> {
             {
                 Either::First(next) => match next {
                     NextScreen::Receiver => {
-                        let mut scanner = apps::receiver::App::new();
-                        scanner.run(terminal, subscriber).await;
+                        unimplemented!()
                     }
                     NextScreen::Scanner => {
-                        let mut scanner = apps::scanner::App::new();
-                        scanner.run(terminal, subscriber).await;
+                        unimplemented!()
                     }
                 },
                 Either::Second(res) => {

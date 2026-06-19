@@ -6,6 +6,7 @@ mod app;
 mod ble;
 mod buttons;
 mod drawer;
+mod hid;
 mod pins;
 
 extern crate alloc;
@@ -53,6 +54,7 @@ static WATCH: Watch<CriticalSectionRawMutex, [u8; 4736], 1> = Watch::new();
 
 #[ariel_os::task(autostart, peripherals)]
 async fn main(peripherals: pins::I2cBus) {
+
     info!("Hello World!");
 
     // set up i2c bus

@@ -1,2 +1,1 @@
-pub mod receiver;
-pub mod scanner;
+pub mod keypad;

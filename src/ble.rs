@@ -1,5 +1,6 @@
 use alloc::string::String;
 
+use crate::hid::KeypadReport;
 use ariel_os::{
     log::{Debug2Format, error, info, trace, warn},
     time::{Duration, Instant},
@@ -18,10 +19,14 @@ use trouble_host::{
     connection::{PhySet, ScanConfig},
     gap::{GapConfig, PeripheralConfig},
     gatt::{GattConnection, GattConnectionEvent, GattEvent},
-    prelude::EventHandler,
-    prelude::{DefaultPacketPool, FromGatt, Peripheral, appearance, gatt_server, gatt_service},
+    prelude::{
+        DefaultPacketPool, EventHandler, FromGatt, Peripheral, appearance, gatt_server,
+        gatt_service, service,
+    },
     scan::Scanner,
 };
+use usbd_hid::descriptor::SerializedDescriptor;
+
 pub const MAX_TX_PACKET_SIZE: usize = 64;
 const NAME: &str = "Ariel OS CDC badge";
 pub type GattMessage = heapless::String<{ crate::ble::MAX_TX_PACKET_SIZE }>;
@@ -45,12 +50,33 @@ pub struct ContactData {
 #[gatt_server]
 struct Server {
     write_service: WriteService,
+    hid_service: HidService,
 }
 
 #[gatt_service(uuid = "fd544724-0d14-4ecc-b4b5-65f9d0ee1fe3")]
 struct WriteService {
     #[characteristic(uuid = "fd544724-0d14-4ecc-b4b5-65f9cafecafe", write)]
     write_data: heapless::Vec<u8, MAX_TX_PACKET_SIZE>,
+}
+
+#[gatt_service(uuid = service::HUMAN_INTERFACE_DEVICE)]
+pub(crate) struct HidService {
+    #[characteristic(uuid = "2a4a", read, value = [0x01, 0x01, 0x00, 0x03])]
+    pub(crate) hid_info: [u8; 4],
+
+    // info!("len: {}", KeypadReport::desc().len());
+    #[characteristic(uuid = "2a4b", read, value = KeypadReport::desc().try_into().expect("converting hid report to an [u8; 42] (check if size is correct)"))]
+    pub(crate) report_map: [u8; 42],
+    #[characteristic(uuid = "2a4c", write_without_response)]
+    pub(crate) hid_control_point: u8,
+    #[characteristic(uuid = "2a4e", read, write_without_response, value = 1)]
+    pub(crate) protocol_mode: u8,
+    #[descriptor(uuid = "2908", read, value = [0u8, 1u8])]
+    #[characteristic(uuid = "2a4d", read, notify)]
+    pub(crate) input_keyboard: [u8; 8],
+    #[descriptor(uuid = "2908", read, value = [0u8, 2u8])]
+    #[characteristic(uuid = "2a4d", read, write, write_without_response)]
+    pub(crate) output_keyboard: [u8; 1],
 }
 
 pub fn scanned_device_receiver<'a>() -> Receiver<'a, CriticalSectionRawMutex, Contact, 32> {
@@ -67,7 +93,7 @@ pub async fn run() {
 
     let server = Server::new_with_config(GapConfig::Peripheral(PeripheralConfig {
         name: NAME,
-        appearance: &appearance::motorized_vehicle::TROLLEY,
+        appearance: &appearance::human_interface_device::KEYBOARD,
     }))
     .unwrap();
     let printer = DiscorveryHandler {};
