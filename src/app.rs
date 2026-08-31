@@ -31,7 +31,7 @@ use crate::{
     buttons::{Button, ButtonSatuChange},
 };
 
-pub enum NextScreen {
+pub enum NextTerminalApp {
     Scanner,
     Receiver,
 }
@@ -67,7 +67,7 @@ impl<'a, B: Backend> App<'a, B> {
     >(
         &self,
         subscriber: &mut Subscriber<'b, M, (Button, ButtonSatuChange), CAP, SUBS, PUBS>,
-    ) -> NextScreen {
+    ) -> NextTerminalApp {
         loop {
             let event = subscriber.next_message_pure().await;
             self.buttons_down.lock(|v| {
@@ -102,10 +102,10 @@ impl<'a, B: Backend> App<'a, B> {
         }
     }
 
-    pub async fn handle_enter(&self) -> Option<NextScreen> {
+    pub async fn handle_enter(&self) -> Option<NextTerminalApp> {
         match self.list_state.lock(|s| s.borrow().selected()) {
-            Some(0) => Some(NextScreen::Scanner),
-            Some(1) => Some(NextScreen::Receiver),
+            Some(0) => Some(NextTerminalApp::Scanner),
+            Some(1) => Some(NextTerminalApp::Receiver),
             Some(2) => {
                 info!("Toggling backlight");
 
@@ -144,11 +144,11 @@ impl<'a, B: Backend> App<'a, B> {
             .await
             {
                 Either::First(next) => match next {
-                    NextScreen::Receiver => {
+                    NextTerminalApp::Receiver => {
                         let mut scanner = apps::receiver::App::new();
                         scanner.run(terminal, subscriber).await;
                     }
-                    NextScreen::Scanner => {
+                    NextTerminalApp::Scanner => {
                         let mut scanner = apps::scanner::App::new();
                         scanner.run(terminal, subscriber).await;
                     }
